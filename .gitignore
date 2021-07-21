@@ -5,3 +5,6 @@ vibe-env/
 output/
 *.mp4
 results
+ava_output/
+pseudo_output/
+tmp
