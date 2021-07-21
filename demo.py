@@ -180,42 +180,6 @@ def main(args):
                 smpl_joints2d = torch.cat(smpl_joints2d, dim=0)
                 del batch
 
-            # ========= [Optional] run Temporal SMPLify to refine the results ========= #
-            if args.run_smplify and args.tracking_method == 'pose':
-                norm_joints2d = np.concatenate(norm_joints2d, axis=0)
-                norm_joints2d = convert_kps(norm_joints2d, src='staf', dst='spin')
-                norm_joints2d = torch.from_numpy(norm_joints2d).float().to(device)
-
-                # Run Temporal SMPLify
-                update, new_opt_vertices, new_opt_cam, new_opt_pose, new_opt_betas, \
-                new_opt_joints3d, new_opt_joint_loss, opt_joint_loss = smplify_runner(
-                    pred_rotmat=pred_pose,
-                    pred_betas=pred_betas,
-                    pred_cam=pred_cam,
-                    j2d=norm_joints2d,
-                    device=device,
-                    batch_size=norm_joints2d.shape[0],
-                    pose2aa=False,
-                )
-
-                # update the parameters after refinement
-                # print(f'Update ratio after Temporal SMPLify: {update.sum()} / {norm_joints2d.shape[0]}')
-                pred_verts = pred_verts.cpu()
-                pred_cam = pred_cam.cpu()
-                pred_pose = pred_pose.cpu()
-                pred_betas = pred_betas.cpu()
-                pred_joints3d = pred_joints3d.cpu()
-                pred_verts[update] = new_opt_vertices[update]
-                pred_cam[update] = new_opt_cam[update]
-                pred_pose[update] = new_opt_pose[update]
-                pred_betas[update] = new_opt_betas[update]
-                pred_joints3d[update] = new_opt_joints3d[update]
-
-            elif args.run_smplify and args.tracking_method == 'bbox':
-                pass
-                # print('[WARNING] You need to enable pose tracking to run Temporal SMPLify algorithm!')
-                # print('[WARNING] Continuing without running Temporal SMPLify!..')
-
             # ========= Save results to a pickle file ========= #
             pred_cam = pred_cam.cpu().numpy()
             pred_verts = pred_verts.cpu().numpy()
@@ -260,99 +224,99 @@ def main(args):
 
             vibe_results[person_id] = output_dict
 
-            del model
+        del model
 
-            end = time.time()
-            fps = num_frames / (end - vibe_time)
+        end = time.time()
+        fps = num_frames / (end - vibe_time)
 
-            # print(f'VIBE FPS: {fps:.2f}')
-            total_time = time.time() - total_time
-            # print(f'Total time spent: {total_time:.2f} seconds (including model loading time).')
-            # print(f'Total FPS (including model loading time): {num_frames / total_time:.2f}.')
+        # print(f'VIBE FPS: {fps:.2f}')
+        total_time = time.time() - total_time
+        # print(f'Total time spent: {total_time:.2f} seconds (including model loading time).')
+        # print(f'Total FPS (including model loading time): {num_frames / total_time:.2f}.')
 
-            # print(f'Saving output results to \"{os.path.join(output_path, "vibe_output.pkl")}\".')
+        # print(f'Saving output results to \"{os.path.join(output_path, "vibe_output.pkl")}\".')
 
-            joblib.dump(vibe_results, os.path.join(output_path, "vibe_output.pkl"))
+        joblib.dump(vibe_results, os.path.join(output_path, "vibe_output.pkl"))
 
-            if not args.no_render:
-                # ========= Render results as a single video ========= #
-                renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=args.wireframe)
+        if not args.no_render:
+            # ========= Render results as a single video ========= #
+            renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=args.wireframe)
 
-                output_img_folder = f'{image_folder}_output'
-                os.makedirs(output_img_folder, exist_ok=True)
+            output_img_folder = f'{image_folder}_output'
+            os.makedirs(output_img_folder, exist_ok=True)
 
-                # print(f'Rendering output video, writing frames to {output_img_folder}')
+            # print(f'Rendering output video, writing frames to {output_img_folder}')
 
-                # prepare results for rendering
-                frame_results = prepare_rendering_results(vibe_results, num_frames)
-                mesh_color = {k: colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0) for k in vibe_results.keys()}
+            # prepare results for rendering
+            frame_results = prepare_rendering_results(vibe_results, num_frames)
+            mesh_color = {k: colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0) for k in vibe_results.keys()}
 
-                image_file_names = sorted([
-                    os.path.join(image_folder, x)
-                    for x in os.listdir(image_folder)
-                    if x.endswith('.png') or x.endswith('.jpg')
-                ])
+            image_file_names = sorted([
+                os.path.join(image_folder, x)
+                for x in os.listdir(image_folder)
+                if x.endswith('.png') or x.endswith('.jpg')
+            ])
 
-                for frame_idx in tqdm(range(len(image_file_names))):
-                    img_fname = image_file_names[frame_idx]
-                    img = cv2.imread(img_fname)
+            for frame_idx in tqdm(range(len(image_file_names))):
+                img_fname = image_file_names[frame_idx]
+                img = cv2.imread(img_fname)
+
+                if args.sideview:
+                    side_img = np.zeros_like(img)
+
+                for person_id, person_data in frame_results[frame_idx].items():
+                    frame_verts = person_data['verts']
+                    frame_cam = person_data['cam']
+
+                    mc = mesh_color[person_id]
+
+                    mesh_filename = None
+
+                    if args.save_obj:
+                        mesh_folder = os.path.join(output_path, 'meshes', f'{person_id:04d}')
+                        os.makedirs(mesh_folder, exist_ok=True)
+                        mesh_filename = os.path.join(mesh_folder, f'{frame_idx:06d}.obj')
+
+                    img = renderer.render(
+                        img,
+                        frame_verts,
+                        cam=frame_cam,
+                        color=mc,
+                        mesh_filename=mesh_filename,
+                    )
 
                     if args.sideview:
-                        side_img = np.zeros_like(img)
-
-                    for person_id, person_data in frame_results[frame_idx].items():
-                        frame_verts = person_data['verts']
-                        frame_cam = person_data['cam']
-
-                        mc = mesh_color[person_id]
-
-                        mesh_filename = None
-
-                        if args.save_obj:
-                            mesh_folder = os.path.join(output_path, 'meshes', f'{person_id:04d}')
-                            os.makedirs(mesh_folder, exist_ok=True)
-                            mesh_filename = os.path.join(mesh_folder, f'{frame_idx:06d}.obj')
-
-                        img = renderer.render(
-                            img,
+                        side_img = renderer.render(
+                            side_img,
                             frame_verts,
                             cam=frame_cam,
                             color=mc,
-                            mesh_filename=mesh_filename,
+                            angle=270,
+                            axis=[0,1,0],
                         )
 
-                        if args.sideview:
-                            side_img = renderer.render(
-                                side_img,
-                                frame_verts,
-                                cam=frame_cam,
-                                color=mc,
-                                angle=270,
-                                axis=[0,1,0],
-                            )
+                if args.sideview:
+                    img = np.concatenate([img, side_img], axis=1)
 
-                    if args.sideview:
-                        img = np.concatenate([img, side_img], axis=1)
-
-                    cv2.imwrite(os.path.join(output_img_folder, f'{frame_idx:06d}.png'), img)
-
-                    if args.display:
-                        cv2.imshow('Video', img)
-                        if cv2.waitKey(1) & 0xFF == ord('q'):
-                            break
+                cv2.imwrite(os.path.join(output_img_folder, f'{frame_idx:06d}.png'), img)
 
                 if args.display:
-                    cv2.destroyAllWindows()
+                    cv2.imshow('Video', img)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
 
-                # ========= Save rendered video ========= #
-                vid_name = os.path.basename(video_file)
-                save_name = f'{vid_name.replace(".mp4", "")}_vibe_result.mp4'
-                save_name = os.path.join(output_path, save_name)
-                # print(f'Saving result video to {save_name}')
-                images_to_video(img_folder=output_img_folder, output_vid_file=save_name)
-                shutil.rmtree(output_img_folder)
+            if args.display:
+                cv2.destroyAllWindows()
 
-            shutil.rmtree(image_folder)
+            # ========= Save rendered video ========= #
+            vid_name = os.path.basename(video_file)
+            save_name = f'{vid_name.replace(".mp4", "")}_vibe_result.mp4'
+            save_name = os.path.join(output_path, save_name)
+            # print(f'Saving result video to {save_name}')
+            images_to_video(img_folder=output_img_folder, output_vid_file=save_name)
+            shutil.rmtree(output_img_folder)
+
+        shutil.rmtree(image_folder)
         # print('================= END =================')
 
 if __name__ == '__main__':
